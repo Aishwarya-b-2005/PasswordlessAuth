@@ -1,0 +1,199 @@
+<!-- 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Access</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="card">
+    <h2>Secure Login</h2>
+
+    <label for="username">Username</label>
+    <input
+        type="text"
+        id="username"
+        name="username"
+        autocomplete="username"
+        required
+    >
+
+    <label for="keyfile">Private Key File</label>
+    <input
+        type="file"
+        id="keyfile"
+        name="keyfile"
+        required
+    >
+
+    <button onclick="login()">Authenticate</button>
+    <p id="status"></p>
+
+    <a href="/register">Register New User</a>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/node-forge@1.3.1/dist/forge.min.js"></script>
+<script>
+async function login() {
+    if (!keyfile.files.length) {
+        status.innerText = "Please select your private key file.";
+        return;
+    }
+
+    const user = username.value;
+    const file = keyfile.files[0];
+
+    const chal = await fetch(`/challenge/${user}`);
+    const nonce = forge.util.decode64((await chal.json()).nonce);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+        const key = forge.pki.privateKeyFromPem(reader.result);
+        const md = forge.md.sha256.create();
+        md.update(nonce);
+        const sig = forge.util.encode64(key.sign(md));
+
+        const res = await fetch("/request-access", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                username: user,
+                signature: sig
+            })
+        });
+
+        status.innerText = "Access: " + (await res.json()).status;
+    };
+
+    reader.readAsText(file);
+}
+</script>
+
+</body>
+</html> -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Access</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="card">
+    <h2>Secure Login</h2>
+
+    <label for="username">Username</label>
+    <input
+        type="text"
+        id="username"
+        name="username"
+        autocomplete="username"
+        required
+    >
+
+    <label for="keyfile">Private Key File</label>
+    <input
+        type="file"
+        id="keyfile"
+        name="keyfile"
+        required
+    >
+
+    <button onclick="login()">Authenticate</button>
+    <p id="status"></p>
+
+    <a href="/register">Register New User</a>
+</div>
+
+<script>
+async function login() {
+    const statusEl = document.getElementById("status");
+    statusEl.innerText = "";
+
+    const usernameEl = document.getElementById("username");
+    const keyfileEl = document.getElementById("keyfile");
+
+    const username = usernameEl.value.trim();
+    const file = keyfileEl.files[0];
+
+    // ✅ Input validation
+    if (!username) {
+        statusEl.innerText = "Please enter a username.";
+        return;
+    }
+
+    if (!file) {
+        statusEl.innerText = "Please select your private key file.";
+        return;
+    }
+
+    try {
+        // 1️⃣ Get challenge (nonce) from server
+        const chalRes = await fetch(`/challenge/${username}`);
+        if (!chalRes.ok) {
+            statusEl.innerText = "Failed to get challenge from server.";
+            return;
+        }
+
+        const chalData = await chalRes.json();
+        const nonce = Uint8Array.from(
+            atob(chalData.nonce),
+            c => c.charCodeAt(0)
+        );
+
+        // 2️⃣ Load private key from file
+        const keyBuffer = await file.arrayBuffer();
+        const privateKey = await crypto.subtle.importKey(
+            "pkcs8",
+            keyBuffer,
+            {
+                name: "RSA-PSS",
+                hash: "SHA-256"
+            },
+            false,
+            ["sign"]
+        );
+
+        // 3️⃣ Sign the nonce
+        const signatureBuffer = await crypto.subtle.sign(
+            {
+                name: "RSA-PSS",
+                saltLength: 32
+            },
+            privateKey,
+            nonce
+        );
+
+        const signatureB64 = btoa(
+            String.fromCharCode(...new Uint8Array(signatureBuffer))
+        );
+
+        // 4️⃣ Send signature to server
+        const res = await fetch("/request-access", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                username: username,
+                signature: signatureB64
+            })
+        });
+
+        const result = await res.json();
+        statusEl.innerText = "Access: " + result.status;
+
+    } catch (err) {
+        console.error(err);
+        statusEl.innerText = "Authentication error. Check key and try again.";
+    }
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!--DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="card">
+    <h2>User Registration</h2>
+
+    <label for="username">Username</label>
+    <input
+        type="text"
+        id="username"
+        name="username"
+        autocomplete="username"
+        required
+    >
+
+    <label for="pubkey">Public Key File</label>
+    <input
+        type="file"
+        id="pubkey"
+        name="pubkey"
+        required
+    >
+
+    <button onclick="register()">Register</button>
+    <p id="status"></p>
+</div>
+
+<script>
+async function register() {
+    if (!pubkey.files.length) {
+        status.innerText = "Please select a public key file.";
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+        const fd = new FormData();
+        fd.append("username", username.value);
+        fd.append("public_key", reader.result);
+
+        const res = await fetch("/register", {
+            method: "POST",
+            body: fd
+        });
+
+        status.innerText = (await res.json()).status;
+    };
+
+    reader.readAsText(pubkey.files[0]);
+}
+</script>
+
+</body>
+</html> -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Registration</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="card">
+  <h2>Register New User</h2>
+
+  <input id="username" placeholder="Username">
+  <button onclick="generateAndRegister()">Generate Keys & Register</button>
+
+  <p id="status"></p>
+</div>
+
+<script>
+async function generateAndRegister() {
+  const username = document.getElementById("username").value;
+  if (!username) {
+    alert("Username required");
+    return;
+  }
+
+  // 1️⃣ Generate key pair in browser
+  const keyPair = await window.crypto.subtle.generateKey(
+    {
+      name: "RSA-PSS",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256"
+    },
+    true,
+    ["sign", "verify"]
+  );
+
+  // 2️⃣ Export public key
+  const publicKey = await crypto.subtle.exportKey(
+    "spki",
+    keyPair.publicKey
+  );
+
+  const publicKeyPem = btoa(
+    String.fromCharCode(...new Uint8Array(publicKey))
+  );
+
+  // 3️⃣ Export private key (user download)
+  const privateKey = await crypto.subtle.exportKey(
+    "pkcs8",
+    keyPair.privateKey
+  );
+
+  const privateKeyBlob = new Blob(
+    [privateKey],
+    { type: "application/octet-stream" }
+  );
+
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(privateKeyBlob);
+  a.download = `${username}_private.key`;
+  a.click();
+
+  // 4️⃣ Send public key to server
+  const formData = new FormData();
+  formData.append("username", username);
+  formData.append("public_key", publicKeyPem);
+
+  const res = await fetch("/register", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await res.json();
+  document.getElementById("status").innerText =
+    "Registration: " + data.status;
+}
+</script>
+
+</body>
+</html>

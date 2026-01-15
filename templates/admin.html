@@ -1,0 +1,91 @@
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="card">
+    <h2>Audit Log Dashboard</h2>
+
+    <button onclick="verifyLogs()">Verify Log Integrity</button>
+    <p id="integrity"></p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Action</th>
+                <th>Result</th>
+                <th>Timestamp</th>
+            </tr>
+        </thead>
+        <tbody id="logTable"></tbody>
+    </table>
+</div>
+
+<script>
+async function verifyLogs() {
+    const res = await fetch("/verify-logs");
+    const data = await res.json();
+    document.getElementById("integrity").innerText =
+        "Integrity Status: " + data.integrity;
+}
+
+async function loadLogs() {
+    const res = await fetch("/get-logs");
+    const logs = await res.json();
+
+    const table = document.getElementById("logTable");
+    table.innerHTML = "";
+
+    logs.forEach(log => {
+        table.innerHTML += `
+            <tr>
+                <td>${log[0]}</td>
+                <td>${log[1]}</td>
+                <td>${log[2]}</td>
+                <td>${log[3]}</td>
+            </tr>
+        `;
+    });
+}
+
+loadLogs();
+</script>
+
+</body>
+</html> -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="card">
+    <h2>Audit Logs</h2>
+    <button onclick="verify()">Verify Integrity</button>
+    <p id="integrity"></p>
+    <table id="logs"></table>
+</div>
+
+<script>
+async function verify() {
+    integrity.innerText =
+        (await fetch("/verify-logs").then(r=>r.json())).integrity;
+}
+
+fetch("/get-logs").then(r=>r.json()).then(data=>{
+    logs.innerHTML = data.map(
+        l=>`<tr><td>${l.join("</td><td>")}</td></tr>`
+    ).join("");
+});
+</script>
+</body>
+</html>

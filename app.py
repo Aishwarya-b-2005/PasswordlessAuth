@@ -1,55 +1,6 @@
-# from flask import Flask, render_template, request, jsonify
-# from security.audit_log import add_log_entry, verify_log_integrity
-# import sqlite3
-
-# app = Flask(__name__)
-
-# @app.route("/")
-# def index():
-#     return render_template("index.html")
-
-# @app.route("/admin")
-# def admin():
-#     return render_template("admin.html")
-
-# @app.route("/request-access", methods=["POST"])
-# def request_access():
-#     user = request.form.get("username")
-
-#     # Temporary access logic
-#     access_granted = True
-
-#     add_log_entry(
-#         user=user,
-#         action="ACCESS_REQUEST",
-#         result="GRANTED" if access_granted else "DENIED"
-#     )
-
-#     return jsonify({"status": "GRANTED" if access_granted else "DENIED"})
-
-# @app.route("/verify-logs")
-# def verify_logs():
-#     integrity = verify_log_integrity()
-#     return jsonify({"integrity": "OK" if integrity else "TAMPERED"})
-
-# @app.route("/get-logs")
-# def get_logs():
-#     conn = sqlite3.connect("database/database.db")
-#     cursor = conn.cursor()
-#     cursor.execute("""
-#         SELECT user, action, result, timestamp
-#         FROM audit_log ORDER BY id DESC
-#     """)
-#     logs = cursor.fetchall()
-#     conn.close()
-
-#     return jsonify(logs)
-
-# if __name__ == "__main__":
-#     app.run(debug=True)
 from flask import Flask, render_template, request, jsonify
 import os, base64, sqlite3
-
+import time, hashlib
 from security.audit_log import add_log_entry, verify_log_integrity
 from security.auth import verify_signature
 
@@ -88,10 +39,30 @@ def register():
 
     return jsonify({"status": status})
 
+NONCE_EXPIRY_SECONDS = 30
+
+
+def cleanup_expired_nonces():
+    now = time.time()
+    expired = [
+        user for user, data in challenges.items()
+        if now - data["timestamp"] > NONCE_EXPIRY_SECONDS
+    ]
+    for user in expired:
+        del challenges[user]
+
+
 @app.route("/challenge/<username>")
 def challenge(username):
+    cleanup_expired_nonces()
+
     nonce = os.urandom(32)
-    challenges[username] = nonce
+
+    challenges[username] = {
+        "nonce": nonce,
+        "timestamp": time.time()
+    }
+
     return jsonify({"nonce": base64.b64encode(nonce).decode()})
 
 @app.route("/request-access", methods=["POST"])
@@ -100,15 +71,33 @@ def request_access():
     username = data["username"]
     signature = base64.b64decode(data["signature"])
 
-    nonce = challenges.get(username)
-    if not nonce:
+    challenge_data = challenges.get(username)
+
+    # ❌ No challenge
+    if not challenge_data:
+        add_log_entry(username, "LOGIN_FAILED_NO_CHALLENGE", "DENIED")
         return jsonify({"status": "DENIED"})
 
-    valid = verify_signature(username, signature, nonce)
-    result = "GRANTED" if valid else "DENIED"
+    # ⏱️ Expiry check
+    if time.time() - challenge_data["timestamp"] > NONCE_EXPIRY_SECONDS:
+        del challenges[username]
+        add_log_entry(username, "LOGIN_FAILED_EXPIRED_NONCE", "DENIED")
+        return jsonify({"status": "DENIED"})
 
-    add_log_entry(username, "ACCESS_REQUEST", result)
-    return jsonify({"status": result})
+    nonce = challenge_data["nonce"]
+
+    # 🔐 Verify signature
+    valid = verify_signature(username, signature, nonce)
+
+    if valid:
+        # ✅ Single-use nonce → delete after success
+        del challenges[username]
+        add_log_entry(username, "LOGIN_SUCCESS", "GRANTED")
+        return jsonify({"status": "GRANTED"})
+
+    # ❌ Invalid signature
+    add_log_entry(username, "LOGIN_FAILED_INVALID_SIGNATURE", "DENIED")
+    return jsonify({"status": "DENIED"})
 
 @app.route("/verify-logs")
 def verify_logs():

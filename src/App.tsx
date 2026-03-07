@@ -130,39 +130,22 @@
 //   return <Dashboard user={user} onNavigate={() => {}} />;
 // }
 
-import React, { useState } from "react";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import Transfer from "./pages/Transfer";
-import StepUp from "./pages/StepUp";
-
+import React, { useState } from 'react';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import { AuditProvider, SecurityAuditPanel } from './components/SecurityAuditPanel';
 
 export default function App() {
   const [user, setUser] = useState<string | null>(null);
-  const [page, setPage] = useState("dashboard");
-  const [pendingOperation, setPendingOperation] = useState("");
-  if (!user) {
-    return <Login onLoginSuccess={setUser} />;
-  }
 
-  if (page === "transfer") {
-    return <Transfer user={user} />;
-  }
-  if (page === "stepup") {
   return (
-    <StepUp
-      user={user}
-      operation={pendingOperation}
-      onSuccess={() => {
-        setPage("transfer");
-      }}
-    />
-  );
-}
-  return (
-    <Dashboard
-      user={user}
-      onNavigate={(newPage) => setPage(newPage)}
-    />
+    <AuditProvider>
+      {!user
+        ? <Login onLoginSuccess={setUser} />
+        : <Dashboard user={user} onNavigate={() => {}} />
+      }
+      {/* Floating audit panel — visible on every page */}
+      <SecurityAuditPanel />
+    </AuditProvider>
   );
 }

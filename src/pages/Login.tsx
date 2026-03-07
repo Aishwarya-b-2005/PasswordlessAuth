@@ -1,273 +1,185 @@
-
-
-import React, { useState } from 'react';
-import { User, Key, ShieldCheck, ShieldAlert, Loader2 } from 'lucide-react';
-import { InfoTooltip } from '../components/InfoTooltip';
-import { SECURITY_INFO } from '../constants';
+import React, { useState, useEffect } from 'react';
+import { User, ShieldCheck, ShieldAlert, Loader2, Lock, KeyRound } from 'lucide-react';
 
 import { Api } from '../services/api';
-import { generateKeyPair, exportPrivateKeyPEM, exportPublicKeyPEM } from '../utils/keygen';
+import { generateKeyPair, exportPublicKeyPEM } from '../utils/keygen';
+import {
+  encryptAndStorePrivateKey,
+  decryptAndSign,
+  hasStoredKey,
+  deleteStoredKey,
+  collectDeviceFingerprint,
+} from '../utils/deviceKey';
+import { useAudit } from '../components/SecurityAuditPanel';
 
 interface LoginProps {
   onLoginSuccess: (username: string) => void;
 }
 
 const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
-  const [username, setUsername] = useState('');
-  const [privateKeyFile, setPrivateKeyFile] = useState<File | null>(null);
+  const { log, clear } = useAudit();
+
+  const [username, setUsername]               = useState('');
+  const [activeTab, setActiveTab]             = useState<'login' | 'register'>('login');
+  const [showFingerprint, setShowFingerprint] = useState(false);
+  const [fingerprintHash, setFingerprintHash] = useState<string>('computing…');
+
+  useEffect(() => {
+    collectDeviceFingerprint().then(setFingerprintHash);
+  }, []);
 
   const [step, setStep] = useState<
-    'idle' | 'requesting' | 'signing' | 'verifying' | 'success' | 'failed'
+    | 'idle' | 'generating' | 'encrypting'
+    | 'requesting' | 'decrypting' | 'signing' | 'verifying'
+    | 'success' | 'failed'
   >('idle');
 
   const [errorMessage, setErrorMessage] = useState('');
 
-  // 🔐 Load private key from uploaded PEM
-  async function loadPrivateKey(file: File): Promise<CryptoKey> {
-    const text = await file.text();
+  // ─── Registration ──────────────────────────────────────────────────────────
+  const handleRegister = async () => {
+    if (!username.trim()) { setErrorMessage('Enter a username first.'); return; }
+    setErrorMessage('');
+    clear();
 
-    const keyData = text
-      .replace(/-----BEGIN PRIVATE KEY-----/, '')
-      .replace(/-----END PRIVATE KEY-----/, '')
-      .replace(/\n/g, '');
-
-    const binary = Uint8Array.from(atob(keyData), (c) => c.charCodeAt(0));
-
-    return window.crypto.subtle.importKey(
-      'pkcs8',
-      binary.buffer,
-      { name: 'RSA-PSS', hash: 'SHA-256' },
-      false,
-      ['sign']
-    );
-  }
-
-  // 🔐 Sign server nonce
-  async function signNonce(
-    privateKey: CryptoKey,
-    nonceBase64: string
-  ): Promise<string> {
-    const nonceBytes = Uint8Array.from(atob(nonceBase64), (c) =>
-      c.charCodeAt(0)
-    );
-
-    const signatureBuffer = await window.crypto.subtle.sign(
-      { name: 'RSA-PSS', saltLength: 32 },
-      privateKey,
-      nonceBytes
-    );
-
-    // safe Base64 conversion
-    const signatureBytes = new Uint8Array(signatureBuffer);
-    let binary = '';
-    signatureBytes.forEach((b) => (binary += String.fromCharCode(b)));
-
-    return btoa(binary);
-  }
-
-  // 🔑 Generate key pair in browser + register public key
-  // const handleGenerateKeys = async () => {
-  //   if (!username) {
-  //     alert('Enter username first.');
-  //     return;
-  //   }
-
-  //   try {
-  //     const keyPair = await generateKeyPair();
-
-  //     const privatePem = await exportPrivateKeyPEM(keyPair.privateKey);
-  //     const publicPem = await exportPublicKeyPEM(keyPair.publicKey);
-
-  //     // download private key
-  //     const blob = new Blob([privatePem], { type: 'application/x-pem-file' });
-  //     const url = URL.createObjectURL(blob);
-  //     const a = document.createElement('a');
-  //     a.href = url;
-  //     a.download = `${username}_private.pem`;
-  //     a.click();
-
-  //     // register public key in backend DB
-  //     const result = await Api.registerUser(username, publicPem);
-
-  //     if (result.status === 'REGISTERED') {
-  //       alert('Keys generated & user registered.');
-  //     } else {
-  //       alert('User already exists.');
-  //     }
-  //   } catch (err) {
-  //     console.error(err);
-  //     alert('Key generation failed.');
-  //   }
-  // };
-  const handleGenerateKeys = async () => {
-  if (!username) {
-    alert("Enter username first.");
-    return;
-  }
-
-  try {
-    const keyPair = await generateKeyPair();
-
-    const privatePem = await exportPrivateKeyPEM(keyPair.privateKey);
-    const publicPem = await exportPublicKeyPEM(keyPair.publicKey);
-
-    // download private key
-    const blob = new Blob([privatePem], { type: "application/x-pem-file" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${username}_private.pem`;
-    a.click();
-
-    alert("Keys generated locally ✔");
-
-    // now backend call separately
     try {
+      log('info', `Starting registration for user "${username}"`);
+
+      setStep('generating');
+      log('crypto', 'Generating RSA-2048 key pair via Web Crypto API (in browser RAM)…');
+      const keyPair   = await generateKeyPair();
+      const publicPem = await exportPublicKeyPEM(keyPair.publicKey);
+      log('ram',  'RSA-2048 key pair created — both keys exist only in RAM so far');
+      log('info', 'Public key exported to PEM format for server registration');
+
+      setStep('encrypting');
+      await encryptAndStorePrivateKey(username, keyPair.privateKey, log);
+
+      log('network', 'Sending public key PEM to server /register endpoint…');
       const result = await Api.registerUser(username, publicPem);
-      console.log("Register response:", result);
-      alert("Backend registration: " + result.status);
-    } catch (apiErr) {
-      console.error("Backend error:", apiErr);
-      alert("Backend connection failed.");
+
+      if (result.status === 'REGISTERED') {
+        log('success', `User "${username}" registered on server. Public key stored in DB.`);
+        log('info', 'Summary: Private key = encrypted in localStorage. Public key = on server. MasterKey = nowhere.');
+        setStep('success');
+        setTimeout(() => { setStep('idle'); setActiveTab('login'); }, 2500);
+      } else if (result.status === 'EXISTS') {
+        deleteStoredKey(username);
+        log('warning', 'Username already exists on server — local key bundle deleted');
+        setStep('idle');
+        setErrorMessage('Username already exists. Try logging in.');
+      } else {
+        log('error', 'Server registration failed: ' + JSON.stringify(result));
+        setStep('failed');
+        setErrorMessage('Backend registration failed.');
+      }
+    } catch (err: any) {
+      log('error', 'Registration exception: ' + err.message);
+      setStep('failed');
+      setErrorMessage('Registration error. See console.');
     }
+  };
 
-  } catch (err) {
-    console.error("Crypto error:", err);
-    alert("Crypto generation failed.");
-  }
-};
-
-  // 🔐 Login handler
+  // ─── Authentication ────────────────────────────────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage('');
+    clear();
 
-    if (!username || !privateKeyFile) {
-      setErrorMessage('Username and private key required.');
+    if (!username.trim()) { setErrorMessage('Enter your username.'); return; }
+
+    if (!hasStoredKey(username)) {
+      setErrorMessage('No key found for that username on this device. Register first, or use your original device.');
+      log('warning', `No localStorage key bundle found for "${username}" on this device`);
       return;
     }
 
     try {
-      setErrorMessage('');
+      log('info', `Starting authentication for user "${username}"`);
 
-      // 1️⃣ Request nonce from Flask
       setStep('requesting');
+      log('network', 'Requesting challenge nonce from server /challenge endpoint…');
       const nonceResponse = await Api.getLoginNonce(username);
 
       if (!nonceResponse.nonce) {
+        log('error', 'Server returned no nonce — user may not exist in DB');
         setStep('failed');
-        setErrorMessage('User not found.');
+        setErrorMessage('User not found on server.');
         return;
       }
+      log('network', 'Server nonce received', `nonce=${nonceResponse.nonce.slice(0, 16)}…`);
 
-      // 2️⃣ Sign nonce locally
+      setStep('decrypting');
+      await new Promise(r => setTimeout(r, 200));
+
       setStep('signing');
-      const privateKey = await loadPrivateKey(privateKeyFile);
-      const signature = await signNonce(privateKey, nonceResponse.nonce);
+      const signature = await decryptAndSign(username, nonceResponse.nonce, log);
 
-      // 3️⃣ Verify with backend
       setStep('verifying');
+      log('network', 'Sending RSA-PSS signature to server /login for verification…');
       const result = await Api.verifyLogin(username, signature);
 
       if (result.status === 'SUCCESS') {
+        log('success', 'Server verified signature against stored public key — ACCESS GRANTED');
+        log('ram', 'All ephemeral key material has been garbage collected by browser');
         setStep('success');
-        setTimeout(() => onLoginSuccess(username), 1000);
+        setTimeout(() => onLoginSuccess(username), 1200);
       } else {
+        log('error', 'Server rejected signature — wrong key or tampered nonce');
         setStep('failed');
         setErrorMessage('Invalid signature or expired nonce.');
       }
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      log('error', 'Authentication exception: ' + err.message);
       setStep('failed');
-      setErrorMessage('Security connection error.');
+      setErrorMessage(err.message ?? 'Authentication error.');
     }
   };
 
+  const stepLabel: Record<string, string> = {
+    generating: '🔑 Generating RSA-2048 Key Pair…',
+    encrypting: '🔒 Encrypting Key with Device Fingerprint…',
+    requesting: '📡 Requesting Server Challenge Nonce…',
+    decrypting: '🔓 Re-deriving Master Key from Device…',
+    signing:    '✍️  Signing Nonce in Memory…',
+    verifying:  '🔍 Verifying Signature with Server…',
+    success:    activeTab === 'register' ? '✅ Registered — Key Secured on this Device' : '✅ Access Granted',
+    failed:     '❌ Failed',
+  };
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 pb-72">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
-        {/* HEADER */}
+
+        {/* Header */}
         <div className="bg-slate-900 p-8 text-white text-center">
           <div className="inline-block p-3 bg-blue-600 rounded-xl mb-4">
             <ShieldCheck size={32} />
           </div>
           <h1 className="text-2xl font-bold">SecureBank Demo</h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Public-Key Academic Authentication
-          </p>
+          <p className="text-slate-400 text-sm mt-1">Device-Bound Key Authentication</p>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-slate-200">
+          {(['login', 'register'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => { setActiveTab(tab); setStep('idle'); setErrorMessage(''); }}
+              className={`flex-1 py-3 text-sm font-semibold capitalize transition-colors ${
+                activeTab === tab
+                  ? 'border-b-2 border-blue-600 text-blue-600'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {tab === 'login' ? '🔐 Login' : '📝 Register'}
+            </button>
+          ))}
         </div>
 
         <div className="p-8">
-          {/* LOGIN FORM */}
-          {step === 'idle' && (
-            <>
-              <form onSubmit={handleLogin} className="space-y-6">
-                {/* USERNAME */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">
-                    Username
-                  </label>
-                  <div className="relative">
-                    <User
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={18}
-                    />
-                    <input
-                      type="text"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg"
-                      required
-                    />
-                  </div>
-                </div>
 
-                {/* PRIVATE KEY */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">
-                    Private Key File
-                    <InfoTooltip
-                      title={SECURITY_INFO.NONCE.title}
-                      content={SECURITY_INFO.NONCE.description}
-                    />
-                  </label>
-                  <div className="relative">
-                    <Key
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={18}
-                    />
-                    <input
-                      type="file"
-                      accept=".pem"
-                      onChange={(e) =>
-                        setPrivateKeyFile(e.target.files?.[0] || null)
-                      }
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer"
-                      required
-                    />
-                  </div>
-                </div>
-
-                {/* LOGIN BUTTON */}
-                <button
-                  type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg"
-                >
-                  Authenticate Securely
-                </button>
-              </form>
-
-              {/* GENERATE KEY BUTTON */}
-              <button
-                type="button"
-                onClick={handleGenerateKeys}
-                className="w-full mt-4 bg-slate-700 hover:bg-slate-800 text-white font-semibold py-3 rounded-lg"
-              >
-                Generate New Key Pair
-              </button>
-            </>
-          )}
-
-          {/* STATUS SCREEN */}
+          {/* Status overlay */}
           {step !== 'idle' && (
             <div className="text-center py-8 space-y-6">
               {step === 'success' ? (
@@ -281,27 +193,110 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               ) : (
                 <Loader2 className="animate-spin text-blue-600 w-16 h-16 mx-auto" />
               )}
-
-              <p className="font-semibold text-lg text-slate-800">
-                {step === 'requesting' && 'Requesting Server Nonce...'}
-                {step === 'signing' && 'Signing Nonce Locally...'}
-                {step === 'verifying' && 'Verifying Signature...'}
-                {step === 'success' && 'Access Granted'}
-                {step === 'failed' && 'Access Denied'}
-              </p>
-
-              {errorMessage && (
-                <p className="text-sm text-rose-600">{errorMessage}</p>
-              )}
-
+              <p className="font-semibold text-lg text-slate-800">{stepLabel[step]}</p>
+              {errorMessage && <p className="text-sm text-rose-600">{errorMessage}</p>}
               {step === 'failed' && (
                 <button
-                  onClick={() => setStep('idle')}
-                  className="px-6 py-2 border border-slate-300 rounded-full"
+                  onClick={() => { setStep('idle'); setErrorMessage(''); }}
+                  className="px-6 py-2 border border-slate-300 rounded-full text-slate-600 hover:bg-slate-50"
                 >
                   Try Again
                 </button>
               )}
+            </div>
+          )}
+
+          {/* ── Login form ── */}
+          {step === 'idle' && activeTab === 'login' && (
+            <form onSubmit={handleLogin} className="space-y-5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Username</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder="Your username"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowFingerprint(f => !f)}
+                className="w-full flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-lg text-left hover:bg-blue-100 transition-colors"
+              >
+                <Lock size={16} className="text-blue-500 mt-0.5 shrink-0" />
+                <div className="text-xs text-blue-700">
+                  <p className="font-semibold">Device-Bound — No PEM File Required</p>
+                  <p className="mt-0.5 text-blue-600">
+                    Your key is encrypted with a master key derived from this device's fingerprint. Tap to reveal.
+                  </p>
+                  {showFingerprint && (
+                    <p className="mt-2 font-mono text-[10px] text-blue-400 break-all">
+                      SHA-256: {fingerprintHash}
+                    </p>
+                  )}
+                </div>
+              </button>
+
+              {errorMessage && <p className="text-sm text-rose-600">{errorMessage}</p>}
+
+              <button
+                type="submit"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg transition-colors"
+              >
+                Authenticate Securely
+              </button>
+            </form>
+          )}
+
+          {/* ── Register form ── */}
+          {step === 'idle' && activeTab === 'register' && (
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Choose Username</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder="Pick a username"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-sm">
+                {[
+                  { icon: '🔑', title: 'RSA-2048 Key Pair Generated',         sub: 'Web Crypto API — in browser RAM only' },
+                  { icon: '🔒', title: 'Private Key Encrypted (AES-256-GCM)', sub: 'MasterKey = PBKDF2(device fingerprint + random salt)' },
+                  { icon: '💾', title: 'Encrypted Bundle → localStorage',     sub: 'No .pem download, no plaintext on disk' },
+                  { icon: '🌐', title: 'Public Key → Server DB',              sub: 'Used to verify RSA-PSS signatures at login' },
+                ].map(item => (
+                  <div key={item.title} className="flex items-start gap-3 p-3">
+                    <span className="text-lg">{item.icon}</span>
+                    <div>
+                      <p className="font-medium text-slate-700">{item.title}</p>
+                      <p className="text-slate-400 text-xs mt-0.5">{item.sub}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {errorMessage && <p className="text-sm text-rose-600">{errorMessage}</p>}
+
+              <button
+                onClick={handleRegister}
+                className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                <KeyRound size={18} />
+                Generate &amp; Secure My Keys
+              </button>
             </div>
           )}
         </div>

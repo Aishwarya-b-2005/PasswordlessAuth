@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, ShieldCheck, ShieldAlert, Loader2, Lock, KeyRound } from 'lucide-react';
+import { User, ShieldCheck, ShieldAlert, Loader2, Lock, KeyRound, ShieldHalf } from 'lucide-react';
 
 import { Api } from '../services/api';
 import { generateKeyPair, exportPublicKeyPEM } from '../utils/keygen';
@@ -14,28 +14,38 @@ import { useAudit } from '../components/SecurityAuditPanel';
 
 interface LoginProps {
   onLoginSuccess: (username: string) => void;
-  stepUpOperation?: string | null;
+  onAdminSuccess: (token: string) => void;   // ← new: admin route
+  stepUpOperation?: string | null;           // ← existing: step-up re-auth
 }
 
-const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
+const Login: React.FC<LoginProps> = ({ onLoginSuccess, onAdminSuccess, stepUpOperation }) => {
   const { log, clear } = useAudit();
 
+  // ── User login / register state (untouched from existing) ──────────────────
   const [username, setUsername]               = useState('');
-  const [activeTab, setActiveTab]             = useState<'login' | 'register'>('login');
+  const [activeTab, setActiveTab]             = useState<'login' | 'register' | 'admin'>('login');
   const [showFingerprint, setShowFingerprint] = useState(false);
   const [fingerprintHash, setFingerprintHash] = useState<string>('computing…');
-
-  useEffect(() => {
-    collectDeviceFingerprint().then(setFingerprintHash);
-  }, []);
 
   const [step, setStep] = useState<
     | 'idle' | 'generating' | 'encrypting'
     | 'requesting' | 'decrypting' | 'signing' | 'verifying'
     | 'success' | 'failed'
   >('idle');
-
   const [errorMessage, setErrorMessage] = useState('');
+
+  // ── Admin login state (new, isolated) ─────────────────────────────────────
+  const [adminUser, setAdminUser]       = useState('');
+  const [adminPass, setAdminPass]       = useState('');
+  const [adminError, setAdminError]     = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
+
+  useEffect(() => {
+    collectDeviceFingerprint().then(setFingerprintHash);
+  }, []);
+
+  // If a step-up is pending, show a banner on the login tab
+  const isStepUp = !!stepUpOperation;
 
   // ─── Registration ──────────────────────────────────────────────────────────
   const handleRegister = async () => {
@@ -81,7 +91,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  // ─── Authentication ────────────────────────────────────────────────────────
+  // ─── User Login ────────────────────────────────────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -96,7 +106,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     }
 
     try {
-      log('info', `Starting authentication for user "${username}"`);
+      log('info', `Starting authentication for user "${username}"${isStepUp ? ` (step-up for ${stepUpOperation})` : ''}`);
 
       setStep('requesting');
       log('network', 'Requesting challenge nonce from server /challenge endpoint…');
@@ -137,6 +147,25 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     }
   };
 
+  // ─── Admin Login ───────────────────────────────────────────────────────────
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminError('');
+    setAdminLoading(true);
+    try {
+      const result = await Api.adminLogin(adminUser, adminPass);
+      if (result.status === 'SUCCESS' && result.token) {
+        onAdminSuccess(result.token);
+      } else {
+        setAdminError('Invalid admin credentials.');
+      }
+    } catch {
+      setAdminError('Could not reach server.');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
   const stepLabel: Record<string, string> = {
     generating: '🔑 Generating RSA-2048 Key Pair…',
     encrypting: '🔒 Encrypting Key with Device Fingerprint…',
@@ -158,30 +187,39 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             <ShieldCheck size={32} />
           </div>
           <h1 className="text-2xl font-bold">SecureBank Demo</h1>
-          <p className="text-slate-400 text-sm mt-1">Device-Bound Key Authentication</p>
+          <p className="text-slate-400 text-sm mt-1">
+            {isStepUp
+              ? `⚠️ Step-Up Required — Re-authenticate to continue ${stepUpOperation}`
+              : 'Device-Bound Key Authentication'}
+          </p>
         </div>
 
-        {/* Tabs */}
+        {/* Tabs — three tabs, admin is the last one */}
         <div className="flex border-b border-slate-200">
-          {(['login', 'register'] as const).map(tab => (
+          {(['login', 'register', 'admin'] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => { setActiveTab(tab); setStep('idle'); setErrorMessage(''); }}
-              className={`flex-1 py-3 text-sm font-semibold capitalize transition-colors ${
+              onClick={() => {
+                setActiveTab(tab);
+                setStep('idle');
+                setErrorMessage('');
+                setAdminError('');
+              }}
+              className={`flex-1 py-3 text-xs font-semibold capitalize transition-colors ${
                 activeTab === tab
                   ? 'border-b-2 border-blue-600 text-blue-600'
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              {tab === 'login' ? '🔐 Login' : '📝 Register'}
+              {tab === 'login' ? '🔐 Login' : tab === 'register' ? '📝 Register' : '🛡️ Admin'}
             </button>
           ))}
         </div>
 
         <div className="p-8">
 
-          {/* Status overlay */}
-          {step !== 'idle' && (
+          {/* ── Status overlay (user flows only) ── */}
+          {step !== 'idle' && activeTab !== 'admin' && (
             <div className="text-center py-8 space-y-6">
               {step === 'success' ? (
                 <div className="inline-block p-4 bg-emerald-100 text-emerald-600 rounded-full">
@@ -207,9 +245,21 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             </div>
           )}
 
-          {/* ── Login form ── */}
+          {/* ── LOGIN FORM ── */}
           {step === 'idle' && activeTab === 'login' && (
             <form onSubmit={handleLogin} className="space-y-5">
+
+              {/* Step-up banner */}
+              {isStepUp && (
+                <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <ShieldHalf size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700 font-medium">
+                    Your <strong>{stepUpOperation}</strong> operation requires re-authentication.
+                    Log in again to continue.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Username</label>
                 <div className="relative">
@@ -250,12 +300,12 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 type="submit"
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg transition-colors"
               >
-                Authenticate Securely
+                {isStepUp ? 'Re-Authenticate & Continue' : 'Authenticate Securely'}
               </button>
             </form>
           )}
 
-          {/* ── Register form ── */}
+          {/* ── REGISTER FORM ── */}
           {step === 'idle' && activeTab === 'register' && (
             <div className="space-y-5">
               <div>
@@ -300,6 +350,64 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               </button>
             </div>
           )}
+
+          {/* ── ADMIN LOGIN FORM ── */}
+          {activeTab === 'admin' && (
+            <form onSubmit={handleAdminLogin} className="space-y-5">
+
+              <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg">
+                <ShieldHalf size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 font-medium">
+                  Admin access only. Password-based — no device key required.
+                  Grants access to hash-chain audit inspector and tamper simulator.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Admin Username</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    value={adminUser}
+                    onChange={e => setAdminUser(e.target.value)}
+                    placeholder="admin"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="password"
+                    value={adminPass}
+                    onChange={e => setAdminPass(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              {adminError && <p className="text-sm text-rose-600">{adminError}</p>}
+
+              <button
+                type="submit"
+                disabled={adminLoading}
+                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-4 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {adminLoading
+                  ? <Loader2 size={18} className="animate-spin" />
+                  : <ShieldHalf size={18} />}
+                Enter Admin Console
+              </button>
+            </form>
+          )}
+
         </div>
       </div>
     </div>

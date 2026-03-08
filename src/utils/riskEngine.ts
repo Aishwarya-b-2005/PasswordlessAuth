@@ -10,39 +10,56 @@
  *      The server combines them with historical baselines to produce a score.
  */
 
+/**
+ * riskEngine.ts
+ * Client-Side Risk Context Collector
+ *
+ * Gathers behavioral + contextual signals BEFORE each operation request.
+ * These signals are sent to the server alongside the nonce request so the
+ * server's Risk Policy Engine can score them and decide: ALLOW / STEP_UP / DENY.
+ *
+ * FIX: collectRiskContext() is now async and calls collectDeviceFingerprint()
+ * from deviceKey.ts directly — so deviceFingerprint is always the same
+ * SHA-256 hex digest that was used to encrypt/decrypt the private key.
+ * Previously riskEngine built its own plain-string fingerprint which NEVER
+ * matched the hash, making the server's device-mismatch check useless.
+ */
+
+import { collectDeviceFingerprint } from './deviceKey';
+
 export interface RiskContext {
   // ── Device ──────────────────────────────────────────────────────────────
-  deviceFingerprint: string;        // Same fingerprint used for key binding
-  screenResolution: string;         // "1920x1080"
-  timezone: string;                 // "Asia/Kolkata"
-  language: string;                 // "en-US"
-  platform: string;                 // "Win32" / "MacIntel"
-  hardwareConcurrency: number;      // CPU core count
+  deviceFingerprint: string;        // SHA-256 hex — identical to deviceKey.ts
+  screenResolution: string;
+  timezone: string;
+  language: string;
+  platform: string;
+  hardwareConcurrency: number;
   colorDepth: number;
 
   // ── Session ──────────────────────────────────────────────────────────────
-  sessionAgeMs: number;             // How long ago the user logged in
-  previousOperationsCount: number;  // Actions performed this session
+  sessionAgeMs: number;
+  previousOperationsCount: number;
   lastOperationTimestamp: number | null;
 
   // ── Behavioural ──────────────────────────────────────────────────────────
-  timeOnPageMs: number;             // How long user spent on this page (too fast = bot signal)
-  mouseMovementDetected: boolean;   // Did the user move the mouse at all?
+  timeOnPageMs: number;
+  mouseMovementDetected: boolean;
   keyboardInteractionDetected: boolean;
 
   // ── Network ──────────────────────────────────────────────────────────────
-  connectionType: string;           // "wifi" / "4g" / "unknown" (via Navigator.connection)
+  connectionType: string;
 
   // ── Operation ────────────────────────────────────────────────────────────
-  operationType: string;            // "TRANSFER" / "DELETE" / etc.
+  operationType: string;
   targetResource?: string;
   amount?: number;
 
   // ── Timestamp ────────────────────────────────────────────────────────────
-  collectedAt: string;              // ISO timestamp
+  collectedAt: string;
 }
 
-// ─── Session State (module-level, cleared on page load) ──────────────────────
+// ─── Session State ────────────────────────────────────────────────────────────
 const SESSION_START = Date.now();
 let operationCount = 0;
 let lastOpTime: number | null = null;
@@ -53,41 +70,35 @@ export function recordOperation() {
 }
 
 // ─── Behavioural Probes ───────────────────────────────────────────────────────
-let _mouseMovedSincePageLoad = false;
+let _mouseMovedSincePageLoad   = false;
 let _keyboardUsedSincePageLoad = false;
-let _pageLoadTime = Date.now();
+const _pageLoadTime            = Date.now();
 
-if (typeof window !== "undefined") {
-  window.addEventListener("mousemove", () => { _mouseMovedSincePageLoad = true; }, { once: true });
-  window.addEventListener("keydown",   () => { _keyboardUsedSincePageLoad = true; }, { once: true });
+if (typeof window !== 'undefined') {
+  window.addEventListener('mousemove', () => { _mouseMovedSincePageLoad   = true; }, { once: true });
+  window.addEventListener('keydown',   () => { _keyboardUsedSincePageLoad = true; }, { once: true });
 }
 
-// ─── Public Collector ─────────────────────────────────────────────────────────
-export function collectRiskContext(
+// ─── Public Collector (now async — awaits the real SHA-256 fingerprint) ───────
+export async function collectRiskContext(
   operationType: string,
   targetResource?: string,
   amount?: number
-): RiskContext {
+): Promise<RiskContext> {
   const nav = navigator as any;
 
-  // Device fingerprint uses same logic as deviceKey.ts
-  const fingerprint = [
-    nav.userAgent,
-    nav.language,
-    nav.hardwareConcurrency?.toString() ?? "",
-    nav.platform ?? "",
-    screen.width + "x" + screen.height,
-    screen.colorDepth?.toString() ?? "",
-    Intl.DateTimeFormat().resolvedOptions().timeZone,
-  ].join("|");
+  // Use the SAME collectDeviceFingerprint() as deviceKey.ts
+  // This returns the SHA-256 hex digest — exactly what the server's
+  // device-mismatch check should be comparing against.
+  const deviceFingerprint = await collectDeviceFingerprint();
 
   return {
     // Device
-    deviceFingerprint: fingerprint,
+    deviceFingerprint,                              // ← now a real SHA-256 hash
     screenResolution: `${screen.width}x${screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     language: nav.language,
-    platform: nav.platform ?? "unknown",
+    platform: nav.platform ?? 'unknown',
     hardwareConcurrency: nav.hardwareConcurrency ?? 0,
     colorDepth: screen.colorDepth,
 
@@ -102,7 +113,7 @@ export function collectRiskContext(
     keyboardInteractionDetected: _keyboardUsedSincePageLoad,
 
     // Network
-    connectionType: nav.connection?.effectiveType ?? "unknown",
+    connectionType: nav.connection?.effectiveType ?? 'unknown',
 
     // Operation
     operationType,

@@ -695,8 +695,8 @@ def calculate_operation_risk(username, operation, ip, context):
     # ── 1. Operation base risk ────────────────────────────────────────────────
     base_risk = {
         "READ":     0.10,   # Low — read-only, least sensitive
-        "WRITE":    0.30,   # Medium — modifies account data
-        "TRANSFER": 0.35,   # Medium-high — moves money
+        "WRITE":    0.42,   # Medium — always STEP_UP (above 0.40 threshold)
+        "TRANSFER": 0.45,   # Medium-high — always STEP_UP
         "DELETE":   0.55,   # High — irreversible account closure
     }
     op_upper = operation.upper()
@@ -778,18 +778,24 @@ def calculate_operation_risk(username, operation, ip, context):
 # =====================================================
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.json
+    data       = request.json
     username   = data["username"]
     public_key = data["publicKey"]
+
     conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    c    = conn.cursor()
     c.execute("SELECT username FROM users WHERE username=?", (username,))
     if c.fetchone():
         conn.close()
         return jsonify({"status": "EXISTS"})
-    c.execute("INSERT INTO users (username, public_key) VALUES (?, ?)", (username, public_key))
+
+    c.execute(
+        "INSERT INTO users (username, public_key) VALUES (?, ?)",
+        (username, public_key)
+    )
     conn.commit()
     conn.close()
+
     return jsonify({"status": "REGISTERED"})
 
 
@@ -991,14 +997,22 @@ def operation_challenge():
     context_string = f"{username}{operation}{str(context)}"
     context_hash   = hashlib.sha256(context_string.encode()).hexdigest()
     nonce          = base64.b64encode(os.urandom(16)).decode()
+    issued_at      = time.time()
+    expires_at     = issued_at + 60     # nonce valid for 60 seconds
 
     OPERATION_NONCES[username] = {
         "nonce":        nonce,
         "operation":    operation,
         "context_hash": context_hash,
-        "timestamp":    time.time()
+        "timestamp":    issued_at,      # used by execute-operation expiry check
     }
-    return jsonify({"nonce": nonce, "operation": operation})
+
+    return jsonify({
+        "nonce":        nonce,
+        "operation":    operation,
+        "contextHash":  context_hash,   # SHA-256(username+operation+context)
+        "expiresAt":    expires_at,     # Unix timestamp — frontend shows countdown
+    })
 
 
 # =====================================================
@@ -1071,7 +1085,7 @@ def execute_operation():
 
 
 # =====================================================
-# STEP-UP CHALLENGE
+# STEP-UP AUTHENTICATION (RSA re-sign with device key)
 # =====================================================
 @app.route("/stepup-challenge", methods=["POST"])
 def stepup_challenge():
@@ -1093,28 +1107,27 @@ def stepup_verify():
     data      = request.json
     username  = data["username"]
     operation = data["operation"]
-    nonce     = data.get("nonce", "")
     signature = data["signature"]
 
     if username not in OPERATION_NONCES:
-        return jsonify({"status": "DENY"})
+        return jsonify({"status": "DENY", "reason": "No pending step-up"})
 
     stored = OPERATION_NONCES.pop(username)
 
     if stored["operation"] != operation:
-        return jsonify({"status": "DENY"})
+        return jsonify({"status": "DENY", "reason": "Operation mismatch"})
 
     if time.time() - stored["timestamp"] > 60:
-        return jsonify({"status": "DENY"})
+        return jsonify({"status": "DENY", "reason": "Step-up nonce expired"})
 
-    # Verify against the nonce stored server-side (not the one sent by client)
     conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    c    = conn.cursor()
     c.execute("SELECT public_key FROM users WHERE username=?", (username,))
-    row = c.fetchone()
+    row  = c.fetchone()
     conn.close()
+
     if not row:
-        return jsonify({"status": "DENY"})
+        return jsonify({"status": "DENY", "reason": "User not found"})
 
     ok = verify_signature(row[0], stored["nonce"], signature)
     if ok:
@@ -1122,11 +1135,11 @@ def stepup_verify():
         return jsonify({"status": "UPGRADED_ALLOW"})
     else:
         log_event(username, "STEPUP_DENIED", 0.9, operation)
-        return jsonify({"status": "DENY"})
+        return jsonify({"status": "DENY", "reason": "Signature verification failed"})
 
 
 # =====================================================
-# PUBLIC LOGS + INTEGRITY
+# LOGS
 # =====================================================
 @app.route("/logs", methods=["GET"])
 def get_logs():

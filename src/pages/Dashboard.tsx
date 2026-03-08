@@ -338,7 +338,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
   const runOperation = async (operationId: OperationType) => {
     setOp({ ...INITIAL, status: 'collecting', operationId, message: 'Gathering device & behavioural signals…' });
     try {
-      const riskCtx = collectRiskContext(operationId);
+      const riskCtx = await collectRiskContext(operationId);
       const contextDetails: ContextDetails = {
         deviceFingerprint: riskCtx.deviceFingerprint, sessionAgeMs: riskCtx.sessionAgeMs,
         timezone: riskCtx.timezone, connectionType: riskCtx.connectionType,

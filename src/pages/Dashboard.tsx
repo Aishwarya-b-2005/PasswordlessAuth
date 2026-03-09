@@ -160,24 +160,231 @@ const WriteView: React.FC<{ user: string; onBack: () => void }> = ({ user, onBac
   );
 };
 
-const TransferView: React.FC<{ user: string; onBack: () => void }> = ({ user, onBack }) => {
+interface TransferViewProps {
+  user: string;
+  onBack: () => void;
+  runTransferAuth: (amount: number, recipient: string) => void;
+  op: OpState;
+  closeModal: () => void;
+  totpCode: string;
+  setTotpCode: (v: string) => void;
+  handleTOTPStepUp: () => void;
+  handleRetry: () => void;
+  headerBg: string;
+}
+
+const TransferView: React.FC<TransferViewProps> = ({
+  user, onBack, runTransferAuth, op, closeModal,
+  totpCode, setTotpCode, handleTOTPStepUp, handleRetry, headerBg,
+}) => {
   const [recipient, setRecipient] = useState('');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
+  const [amount,    setAmount]    = useState('');
+  const [note,      setNote]      = useState('');
   const [phase, setPhase] = useState<'form' | 'confirm' | 'done'>('form');
+
+  // When auth succeeds, move to done phase
+  useEffect(() => {
+    if (op.status === 'allowed' && op.operationId === OperationType.TRANSFER) {
+      setTimeout(() => { closeModal(); setPhase('done'); }, 1200);
+    }
+  }, [op.status]);
+
+  const amountNum = parseFloat(amount || '0');
+
+  // Inline risk hint so user knows what to expect before confirming
+  const getRiskHint = () => {
+    if (amountNum > 10000) return { label: 'LIKELY DENY', color: 'text-rose-600 bg-rose-50 border-rose-200' };
+    if (amountNum > 5000)  return { label: 'STEP_UP EXPECTED', color: 'text-amber-600 bg-amber-50 border-amber-200' };
+    if (amountNum > 1000)  return { label: 'STEP_UP POSSIBLE', color: 'text-amber-500 bg-amber-50 border-amber-100' };
+    if (amountNum > 0)     return { label: 'LIKELY ALLOW', color: 'text-emerald-600 bg-emerald-50 border-emerald-200' };
+    return null;
+  };
+  const hint = getRiskHint();
+
   return (
     <div className="space-y-6">
       <button onClick={onBack} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 text-sm font-medium">
         <ArrowLeft size={16} /> Back to Dashboard
       </button>
+
+      {/* ── Security modal — fires after Confirm & Send ── */}
+      {op.status !== 'idle' && op.operationId === OperationType.TRANSFER && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-4 overflow-hidden">
+
+            <div className={`p-5 text-white ${headerBg}`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-lg">Security Check</h3>
+                  <p className="text-white/70 text-xs mt-0.5 uppercase tracking-wider">
+                    TRANSFER · ${amountNum.toFixed(2)} → {recipient} · Context-Aware Nonce + Risk Engine
+                  </p>
+                </div>
+                {['denied','error','step_up','allowed'].includes(op.status) && (
+                  <button onClick={closeModal} className="p-1 hover:opacity-70"><X size={20} /></button>
+                )}
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+
+              {/* Step progress */}
+              <div className="space-y-1.5">
+                {STEPS.map((s) => {
+                  const order  = STEPS.map(x => x.id);
+                  const curIdx = order.indexOf(op.status);
+                  const sIdx   = order.indexOf(s.id);
+                  const isDone   = ['allowed','denied','step_up','stepup_signing','error'].includes(op.status) || sIdx < curIdx;
+                  const isActive = s.id === op.status;
+                  return (
+                    <div key={s.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${isActive ? 'bg-blue-50 text-blue-800 font-semibold' : isDone ? 'text-slate-400' : 'text-slate-300'}`}>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${isDone ? 'border-emerald-400 bg-emerald-400' : isActive ? 'border-blue-500 bg-blue-500 animate-pulse' : 'border-slate-200'}`}>
+                        {isDone && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7"/></svg>}
+                      </div>
+                      {s.label}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Context signals */}
+              {op.contextDetails && ['challenging','signing','executing','allowed','denied','step_up','stepup_signing'].includes(op.status) && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-800 px-4 py-2.5 flex items-center gap-2">
+                    <Cpu size={14} className="text-blue-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">Context Signals</span>
+                  </div>
+                  <div className="bg-slate-50 p-3 grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[10px]">
+                    <span className="text-slate-400">DEVICE_FP</span><span className="text-slate-700 font-bold truncate">{op.contextDetails.deviceFingerprint.slice(0,22)}…</span>
+                    <span className="text-slate-400">AMOUNT</span><span className="text-blue-700 font-bold">${amountNum.toFixed(2)}</span>
+                    <span className="text-slate-400">RECIPIENT</span><span className="text-slate-700 font-bold">{recipient}</span>
+                    <span className="text-slate-400">SESSION_AGE</span><span className="text-slate-700 font-bold">{(op.contextDetails.sessionAgeMs/1000).toFixed(1)}s</span>
+                    <span className="text-slate-400">MOUSE_MOVED</span>
+                    <span className={`font-bold ${op.contextDetails.mouseMovementDetected ? 'text-emerald-600' : 'text-rose-500'}`}>{op.contextDetails.mouseMovementDetected ? '✓ YES' : '✗ NO'}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Nonce binding */}
+              {op.nonceDetails && ['signing','executing','allowed','denied','step_up','stepup_signing'].includes(op.status) && (
+                <div className="rounded-xl border border-blue-200 overflow-hidden">
+                  <div className="bg-blue-700 px-4 py-2.5 flex items-center gap-2">
+                    <Hash size={14} className="text-blue-200" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">Context-Bound Nonce</span>
+                  </div>
+                  <div className="bg-blue-50 p-3 grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
+                    <span className="text-blue-500 font-semibold">NONCE</span>
+                    <span className="text-slate-800 font-bold truncate">{op.nonceDetails.nonce.slice(0,22)}…</span>
+                    <span className="text-blue-500 font-semibold">CONTEXT_HASH</span>
+                    <span className="text-slate-800 font-bold truncate">{op.nonceDetails.contextHash?.slice(0,22)}…</span>
+                    <span className="text-blue-500 font-semibold">PRE_RISK_SCORE</span>
+                    <span className={`font-bold ${op.nonceDetails.riskScore >= 70 ? 'text-rose-600' : op.nonceDetails.riskScore >= 40 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                      {op.nonceDetails.riskScore}/100
+                    </span>
+                    <span className="text-blue-500 font-semibold">EXPIRES_IN</span>
+                    <span className="text-slate-800 font-bold">
+                      {(() => {
+                        const exp = op.nonceDetails.expiresAt;
+                        if (!exp) return '—';
+                        const rem = Math.round((exp > 1e10 ? exp/1000 : exp) - Date.now()/1000);
+                        return rem > 0 ? <span className="text-emerald-600">{rem}s</span> : <span className="text-rose-500">expired</span>;
+                      })()}
+                    </span>
+                  </div>
+                  <div className="bg-blue-100 px-3 py-2 text-[9px] text-blue-600">
+                    ⚠ Nonce is bound to amount=${amountNum.toFixed(2)} and recipient={recipient}. Replaying with different values fails server-side.
+                  </div>
+                </div>
+              )}
+
+              {/* Final risk score */}
+              {op.riskScore > 0 && ['allowed','denied','step_up','stepup_signing'].includes(op.status) && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-800 px-4 py-2.5 flex items-center gap-2">
+                    <ShieldCheck size={14} className="text-emerald-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">Final Risk Decision</span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-500 uppercase">Risk Score</span>
+                      <span className={`font-bold text-sm ${op.riskScore >= 70 ? 'text-rose-600' : op.riskScore >= 40 ? 'text-amber-600' : 'text-emerald-600'}`}>{op.riskScore}/100</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2.5">
+                      <div className={`h-2.5 rounded-full transition-all ${op.riskScore >= 70 ? 'bg-rose-500' : op.riskScore >= 40 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${op.riskScore}%` }} />
+                    </div>
+                    <div className="flex justify-between text-[9px] text-slate-400 font-mono">
+                      <span>0 — ALLOW</span><span>40 — STEP_UP</span><span>70 — DENY</span>
+                    </div>
+                    {op.riskReasons.length > 0 && (
+                      <ul className="space-y-1 pt-1 border-t border-slate-100">
+                        {op.riskReasons.map((r, i) => (
+                          <li key={i} className="text-xs text-slate-500 flex items-start gap-1.5">
+                            <AlertTriangle size={11} className="text-amber-500 mt-0.5 shrink-0" />{r}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Status message */}
+              <p className={`text-sm text-center font-medium ${op.status === 'allowed' ? 'text-emerald-600' : op.status === 'denied' ? 'text-rose-600' : 'text-slate-600'}`}>
+                {['collecting','challenging','signing','executing','stepup_signing'].includes(op.status) && (
+                  <Loader2 className="inline animate-spin mr-2" size={14} />
+                )}
+                {op.message}
+              </p>
+
+              {/* TOTP step-up */}
+              {op.status === 'step_up' && (
+                <div className="space-y-3">
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3 text-center">
+                    Transfer of ${amountNum.toFixed(2)} requires step-up. Enter your Google Authenticator code.
+                  </p>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={totpCode}
+                    onChange={e => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000"
+                    className="w-full text-center text-3xl font-mono font-bold tracking-[0.5em] py-4 bg-slate-50 border-2 border-amber-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <p className="text-[10px] text-slate-400 text-center">Code refreshes every 30 seconds</p>
+                  <button
+                    onClick={handleTOTPStepUp}
+                    disabled={totpCode.length !== 6}
+                    className="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-bold rounded-lg transition-colors"
+                  >
+                    Verify Code
+                  </button>
+                </div>
+              )}
+
+              {/* Denied / Error */}
+              {['denied','error'].includes(op.status) && (
+                <div className="flex gap-3">
+                  <button onClick={closeModal} className="flex-1 py-3 border border-slate-200 text-slate-600 font-medium rounded-lg hover:bg-slate-50">Cancel</button>
+                  <button onClick={handleRetry} className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg">
+                    <RefreshCw size={15} /> Try Again
+                  </button>
+                </div>
+              )}
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Transfer form ── */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="bg-blue-600 p-6 text-white flex items-center gap-3">
           <div className="p-2 bg-white/20 rounded-lg"><ArrowRightLeft size={20} /></div>
           <div>
             <h2 className="font-bold text-lg">Transfer Money</h2>
-            <p className="text-white/70 text-xs">Nonce-verified · Authorized session</p>
+            <p className="text-white/70 text-xs">Amount-aware risk scoring · Context-bound nonce</p>
           </div>
-          <span className="ml-auto text-[10px] bg-white/20 text-white border border-white/30 px-2 py-1 rounded-full font-bold">✅ AUTHORIZED</span>
         </div>
         <div className="p-6">
           {phase === 'form' && (
@@ -206,6 +413,11 @@ const TransferView: React.FC<{ user: string; onBack: () => void }> = ({ user, on
                   <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
                     className="w-full pl-8 p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
+                {hint && (
+                  <p className={`mt-1.5 text-[10px] font-bold px-2 py-1 rounded border w-fit ${hint.color}`}>
+                    {hint.label}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Note (optional)</label>
@@ -223,13 +435,23 @@ const TransferView: React.FC<{ user: string; onBack: () => void }> = ({ user, on
               <h3 className="font-bold text-slate-800 text-center">Confirm Transfer</h3>
               <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-3 font-mono text-sm">
                 <div className="flex justify-between"><span className="text-slate-400">To</span><span className="font-bold">{recipient}</span></div>
-                <div className="flex justify-between"><span className="text-slate-400">Amount</span><span className="font-bold text-blue-600">${parseFloat(amount||'0').toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Amount</span><span className="font-bold text-blue-600">${amountNum.toFixed(2)}</span></div>
                 {note && <div className="flex justify-between"><span className="text-slate-400">Note</span><span className="font-bold">{note}</span></div>}
-                <div className="flex justify-between pt-2 border-t border-slate-200"><span className="text-slate-400">New Balance</span><span className="font-bold">${(12450.80 - parseFloat(amount||'0')).toFixed(2)}</span></div>
+                <div className="flex justify-between pt-2 border-t border-slate-200"><span className="text-slate-400">New Balance</span><span className="font-bold">${(12450.80 - amountNum).toFixed(2)}</span></div>
               </div>
+              {hint && (
+                <div className={`text-xs font-medium px-3 py-2 rounded-lg border ${hint.color}`}>
+                  💡 Risk engine prediction: <strong>{hint.label}</strong> based on transfer amount
+                </div>
+              )}
               <div className="flex gap-3">
                 <button onClick={() => setPhase('form')} className="flex-1 py-3 border border-slate-200 text-slate-600 font-bold rounded-lg hover:bg-slate-50">Edit</button>
-                <button onClick={() => setPhase('done')} className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors">Confirm & Send</button>
+                <button
+                  onClick={() => runTransferAuth(amountNum, recipient)}
+                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors"
+                >
+                  Confirm & Send
+                </button>
               </div>
             </div>
           )}
@@ -239,7 +461,7 @@ const TransferView: React.FC<{ user: string; onBack: () => void }> = ({ user, on
                 <CheckCircle2 size={36} className="text-emerald-600" />
               </div>
               <h3 className="text-xl font-bold text-slate-800">Transfer Complete</h3>
-              <p className="text-slate-500 text-sm">${parseFloat(amount||'0').toFixed(2)} sent to <strong>{recipient}</strong></p>
+              <p className="text-slate-500 text-sm">${amountNum.toFixed(2)} sent to <strong>{recipient}</strong></p>
               <p className="text-[10px] text-slate-400 font-mono">TXN-{Date.now()} · Logged to audit chain</p>
               <button onClick={onBack} className="w-full py-3 border border-slate-200 text-slate-600 font-bold rounded-lg hover:bg-slate-50">Back to Dashboard</button>
             </div>
@@ -458,6 +680,82 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
     }
   };
 
+  // ── Transfer-specific auth: runs after user fills in amount + recipient ──
+  // Passes amount and recipient inside context so risk engine can score them.
+  const runTransferAuth = async (amount: number, recipient: string) => {
+    const operationId = OperationType.TRANSFER;
+    setOp({ ...INITIAL, status: 'collecting', operationId, message: 'Gathering device & behavioural signals…' });
+    log('info', `── Transfer auth started: $${amount} → ${recipient} ──`);
+    try {
+      // Step 1: collect context — amount + recipient included
+      log('info', 'Collecting device & behavioural signals…');
+      const riskCtx = await collectRiskContext(operationId);
+      const contextWithAmount = { ...riskCtx, amount, recipient };
+      const contextDetails: ContextDetails = {
+        deviceFingerprint: riskCtx.deviceFingerprint, sessionAgeMs: riskCtx.sessionAgeMs,
+        timezone: riskCtx.timezone, connectionType: riskCtx.connectionType,
+        mouseMovementDetected: riskCtx.mouseMovementDetected,
+        keyboardInteractionDetected: riskCtx.keyboardInteractionDetected,
+        timeOnPageMs: riskCtx.timeOnPageMs,
+      };
+      log('crypto', 'Device fingerprint (SHA-256) collected', riskCtx.deviceFingerprint.slice(0, 32) + '…');
+      log('info',   `Amount: $${amount} · Recipient: ${recipient} · Session age: ${(riskCtx.sessionAgeMs/1000).toFixed(1)}s`);
+
+      // Step 2: request nonce — context includes amount so hash covers it
+      setOp(s => ({ ...s, status: 'challenging', contextDetails, message: 'Binding transfer context to nonce…' }));
+      log('network', `POST /operation-challenge — amount=$${amount} is now part of context hash`);
+      const challengeResp = await Api.getOperationChallenge(user, operationId, contextWithAmount);
+
+      if (challengeResp.status === 'DENIED') {
+        log('error', `Challenge denied: ${challengeResp.reason ?? 'risk policy'}`);
+        setOp(s => ({ ...s, status: 'denied', riskScore: challengeResp.risk ?? 0, riskReasons: challengeResp.factors ?? [], message: challengeResp.reason ?? 'Denied by risk policy.' }));
+        return;
+      }
+
+      log('network', 'Nonce received', challengeResp.nonce?.slice(0, 20) + '…');
+      log('crypto',  `Context hash covers: user + TRANSFER + amount=$${amount} + recipient=${recipient}`, challengeResp.contextHash?.slice(0, 32) + '…');
+      log('info',    'Nonce is single-use, expires in 60s, bound to this exact amount');
+
+      const nonceDetails: NonceDetails = {
+        nonce: challengeResp.nonce, contextHash: challengeResp.contextHash ?? '—',
+        expiresAt: challengeResp.expiresAt, riskLevel: challengeResp.riskLevel ?? '—',
+        riskScore: challengeResp.riskScore ?? 0,
+      };
+
+      // Step 3: decrypt private key + sign nonce
+      setOp(s => ({ ...s, status: 'signing', nonceDetails, message: 'Decrypting device key & signing the bound nonce…' }));
+      log('crypto', 'Re-deriving MasterKey from device fingerprint via PBKDF2-SHA256 (310,000 iterations)…');
+      log('crypto', 'AES-256-GCM decryption → private key bytes in RAM');
+      const signature = await decryptAndSign(user, challengeResp.nonce);
+      log('crypto', 'RSA-PSS signature computed over context-bound nonce');
+      log('ram',    '🗑️  Private key bytes zeroed — no longer in memory');
+
+      // Step 4: execute — server checks nonce + context hash + signature + risk
+      setOp(s => ({ ...s, status: 'executing', message: 'Sending signed nonce — server running risk gate…' }));
+      log('network', 'POST /execute-operation — amount is part of context hash, server re-verifies it');
+      const execResp = await Api.executeOperation(user, operationId, challengeResp.nonce, contextWithAmount, signature);
+
+      recordOperation();
+
+      if (execResp.status === 'ALLOW') {
+        log('success', `✅ ALLOW — risk=${execResp.risk}/100 — transfer of $${amount} authorized`);
+        setOp(s => ({ ...s, status: 'allowed', riskScore: execResp.risk ?? 0, message: `Transfer of $${amount} authorised ✓` }));
+        // TransferView's useEffect watches for this and moves to 'done' phase
+      } else if (execResp.status === 'STEP_UP') {
+        log('warning', `⚠️ STEP_UP — risk=${execResp.risk}/100 — amount $${amount} triggered elevated check`);
+        if (execResp.reasons?.length) log('warning', `Risk factors: ${execResp.reasons.join(' · ')}`);
+        setOp(s => ({ ...s, status: 'step_up', riskScore: execResp.risk ?? 0, riskReasons: execResp.reasons ?? [], message: 'Step-up required — open Google Authenticator.' }));
+      } else {
+        log('error', `❌ DENY — risk=${execResp.risk}/100 — transfer blocked`);
+        if (execResp.reasons?.length) log('error', `Risk factors: ${execResp.reasons.join(' · ')}`);
+        setOp(s => ({ ...s, status: 'denied', riskScore: execResp.risk ?? 0, riskReasons: execResp.reasons ?? [], message: execResp.reason ?? 'Transfer denied by risk policy.' }));
+      }
+    } catch (err: any) {
+      log('error', 'Transfer auth error: ' + (err.message ?? 'Unexpected error'));
+      setOp(s => ({ ...s, status: 'error', message: err.message ?? 'Unexpected error.' }));
+    }
+  };
+
   // ── Retry: re-runs the full auth flow for the same operation ──
   const handleRetry = () => {
     if (op.operationId) runOperation(op.operationId);
@@ -471,7 +769,20 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
   // Render post-auth operation views
   if (activeView === OperationType.READ)     return <ReadView     user={user} onBack={() => setActiveView(null)} />;
   if (activeView === OperationType.WRITE)    return <WriteView    user={user} onBack={() => setActiveView(null)} />;
-  if (activeView === OperationType.TRANSFER) return <TransferView user={user} onBack={() => setActiveView(null)} />;
+  if (activeView === OperationType.TRANSFER) return (
+    <TransferView
+      user={user}
+      onBack={() => { setActiveView(null); setOp(INITIAL); setTotpCode(''); }}
+      runTransferAuth={runTransferAuth}
+      op={op}
+      closeModal={closeModal}
+      totpCode={totpCode}
+      setTotpCode={setTotpCode}
+      handleTOTPStepUp={handleTOTPStepUp}
+      handleRetry={handleRetry}
+      headerBg={headerBg}
+    />
+  );
   if (activeView === OperationType.DELETE)   return <DeleteView   user={user} onBack={() => setActiveView(null)} />;
 
   return (
@@ -715,7 +1026,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
           <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4"><ShieldCheck className="text-blue-600" size={20} />Secure Operations</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {OPERATIONS.map(o => (
-              <button key={o.id} onClick={() => runOperation(o.id)}
+              <button key={o.id} onClick={() => o.id === OperationType.TRANSFER ? setActiveView(OperationType.TRANSFER) : runOperation(o.id)}
                 className="group flex flex-col items-start p-6 bg-white border border-slate-200 rounded-xl hover:shadow-lg hover:border-blue-200 transition-all text-left">
                 <div className="p-3 rounded-xl mb-4 bg-slate-50 group-hover:scale-110 transition-transform">{o.icon}</div>
                 <h4 className="font-bold text-slate-800 mb-1">{o.title}</h4>

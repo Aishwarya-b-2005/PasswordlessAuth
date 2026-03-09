@@ -688,10 +688,10 @@ def calculate_operation_risk(username, operation, ip, context):
 
     # ── 1. Operation base risk ────────────────────────────────────────────────
     base_risk = {
-        "READ":     0.10,
-        "WRITE":    0.42,
-        "TRANSFER": 0.45,
-        "DELETE":   0.55,
+        "READ":     0.10,   # ALLOW normally
+        "WRITE":    0.25,   # ALLOW normally; STEP_UP if stale session / IP change / bot
+        "TRANSFER": 0.20,   # ALLOW for small amounts; amount signals push to STEP_UP or DENY
+        "DELETE":   0.40,   # always STEP_UP minimum (floor enforced below)
     }
     op_upper = operation.upper()
     risk += base_risk.get(op_upper, 0.20)
@@ -752,9 +752,11 @@ def calculate_operation_risk(username, operation, ip, context):
     # ── 7. Session age ────────────────────────────────────────────────────────
     session_age_ms  = context.get("sessionAgeMs", 0)
     session_age_sec = session_age_ms / 1000
-    if session_age_sec > 1800 and op_upper in ("WRITE", "TRANSFER", "DELETE"):
+    # NOTE: threshold is 60s for demo purposes (shows stale session penalty quickly)
+    # In production this would be 1800s (30 min)
+    if session_age_sec > 60 and op_upper in ("WRITE", "TRANSFER", "DELETE"):
         risk += 0.20
-        reasons.append(f"Stale session ({session_age_sec/60:.0f} min old) for sensitive op")
+        reasons.append(f"Stale session ({session_age_sec:.0f}s old) for sensitive op")
 
     risk = min(risk, 1.0)
 

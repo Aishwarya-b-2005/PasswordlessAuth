@@ -54,6 +54,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onAdminSuccess, stepUpOpe
     if (!username.trim()) { setErrorMessage('Enter a username first.'); return; }
     setErrorMessage('');
     clear();
+    const registrationStart = performance.now();
 
     try {
       log('info', `Starting registration for user "${username}"`);
@@ -79,6 +80,8 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onAdminSuccess, stepUpOpe
         if (result.totp_qr)     setTotpQR(result.totp_qr);
         if (result.totp_secret) setTotpSecret(result.totp_secret);
         setStep('success');
+        const registrationTimeSec = (performance.now() - registrationStart) / 1000;
+        console.log(`[METRIC] Registration Time: ${registrationTimeSec.toFixed(2)} sec`);
 
       } else if (result.status === 'EXISTS') {
         deleteStoredKey(username);
@@ -102,6 +105,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onAdminSuccess, stepUpOpe
     e.preventDefault();
     setErrorMessage('');
     clear();
+    const loginStart = performance.now();
 
     if (!username.trim()) { setErrorMessage('Enter your username.'); return; }
 
@@ -146,10 +150,14 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, onAdminSuccess, stepUpOpe
         setStep('failed');
         setErrorMessage('Invalid signature or expired nonce.');
       }
+      const loginEnd = performance.now();
+      console.log(`[METRIC] Total Login Latency: ${(loginEnd - loginStart).toFixed(2)} ms`);
     } catch (err: any) {
       log('error', 'Authentication exception: ' + err.message);
       setStep('failed');
       setErrorMessage(err.message ?? 'Authentication error.');
+      const loginEnd = performance.now();
+      console.log(`[METRIC] Total Login Latency: ${(loginEnd - loginStart).toFixed(2)} ms`);
     }
   };
 

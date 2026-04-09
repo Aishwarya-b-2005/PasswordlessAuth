@@ -1075,7 +1075,10 @@ def execute_operation():
 
     # ── 6. Risk scoring ───────────────────────────────────────────────────────
     ip = request.remote_addr
+    t0 = time.perf_counter()
     risk, reasons = calculate_operation_risk(username, operation, ip, context)
+    risk_time_ms = (time.perf_counter() - t0) * 1000.0
+    print(f"[METRIC] Risk Computation: {risk_time_ms:.3f} ms")
 
     if risk < 0.40:
         decision = "ALLOW"
@@ -1088,6 +1091,7 @@ def execute_operation():
     return jsonify({
         "status":  decision,
         "risk":    round(risk * 100),
+        "riskComputationMs": round(risk_time_ms, 3),
         "reasons": reasons,
     })
 

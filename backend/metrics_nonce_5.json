@@ -1,0 +1,64 @@
+{
+  "meta": {
+    "baseUrl": "http://127.0.0.1:5000",
+    "trials": 30,
+    "username": "metrics_user_1775666089",
+    "timestamp": "2026-04-08T16:34:50Z",
+    "nonceExpiryAttempts": 5,
+    "nonceWaitSeconds": 61
+  },
+  "security": {
+    "farFrr": {
+      "trials": 30,
+      "legitimateDenied": 0,
+      "replayAccepted": 0,
+      "frrPercent": 0.0,
+      "farPercent": 0.0
+    },
+    "deviceBinding": {
+      "trials": 30,
+      "acceptedFromDifferentDevice": 0,
+      "blockedOrEscalated": 30,
+      "deviceBindingViolationRatePercent": 0.0
+    },
+    "botDetection": {
+      "trialsPerClass": 30,
+      "confusionMatrix": {
+        "tp": 30,
+        "fp": 0,
+        "tn": 30,
+        "fn": 0
+      },
+      "botDetectionAccuracyPercent": 100.0
+    },
+    "auditIntegrity": {
+      "integrityBefore": "OK",
+      "integrityAfterTamper": "TAMPERED",
+      "auditLogIntegrityRatePercent": 100.0,
+      "restore": {
+        "status": "RESTORED"
+      }
+    },
+    "nonceExpiry": {
+      "attempts": 5,
+      "nonceWaitSeconds": 61,
+      "nonceExpiryViolations": 5,
+      "nonceExpiryViolationRatePercent": 100.0,
+      "lastResponse": {
+        "reason": "Nonce expired",
+        "status": "DENY"
+      }
+    }
+  },
+  "riskEngine": {
+    "distribution": {
+      "samples": 100,
+      "riskScoreMean": 73.75,
+      "riskScoreStdDev": 26.642,
+      "stepUpTriggerRatePercent": 46.0,
+      "denyRateAttackMixPercent": 50.0,
+      "riskComputationMsMean": 1.257,
+      "riskComputationMsStdDev": 0.475
+    }
+  }
+}

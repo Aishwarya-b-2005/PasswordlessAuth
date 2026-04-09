@@ -583,7 +583,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
       // ── Step 2: Request context-bound nonce ───────────────────────────────
       setOp(s => ({ ...s, status: 'challenging', contextDetails, message: 'Sending context to server — requesting bound nonce…' }));
       log('network', `POST /operation-challenge — binding context to nonce for ${operationId}…`);
+      const rttStart = performance.now();
       const challengeResp = await Api.getOperationChallenge(user, operationId, riskCtx);
+      const rtt = performance.now() - rttStart;
+      console.log(`[METRIC] Challenge RTT: ${rtt.toFixed(2)} ms`);
 
       if (challengeResp.status === 'DENIED') {
         log('error', `Challenge denied by server: ${challengeResp.reason ?? 'risk policy'}`);
@@ -651,6 +654,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
     }
 
     setOp(s => ({ ...s, status: 'stepup_signing', message: 'Verifying authenticator code…' }));
+    const stepUpStart = performance.now();
     log('info',    `── Step-Up: TOTP verification for ${operationId} ──`);
     log('network', 'POST /stepup-totp — sending 6-digit TOTP code to server…');
     log('info',    'Server will: fetch totp_secret from DB → pyotp.TOTP(secret).verify(code)');
@@ -662,6 +666,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
         log('info',    'Two factors satisfied: device-bound key (laptop) + TOTP (phone)');
         setTotpCode('');
         setOp(s => ({ ...s, status: 'allowed', message: '✅ Authenticator code verified — operation authorized.' }));
+        const stepUpTimeSec = (performance.now() - stepUpStart) / 1000;
+        console.log(`[METRIC] Step-Up Completion Time: ${stepUpTimeSec.toFixed(2)} sec`);
         setTimeout(() => { closeModal(); setActiveView(operationId); }, 1500);
       } else {
         log('error', `❌ TOTP verification failed: ${result.reason ?? 'invalid code'}`);
@@ -677,6 +683,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
     } catch (err: any) {
       log('error', 'Step-up error: ' + (err.message ?? 'Unexpected error'));
       setOp(s => ({ ...s, status: 'error', message: err.message ?? 'Step-up failed.' }));
+      const stepUpTimeSec = (performance.now() - stepUpStart) / 1000;
+      console.log(`[METRIC] Step-Up Completion Time: ${stepUpTimeSec.toFixed(2)} sec`);
     }
   };
 
@@ -704,7 +712,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onNavigate, onStepUp, pendi
       // Step 2: request nonce — context includes amount so hash covers it
       setOp(s => ({ ...s, status: 'challenging', contextDetails, message: 'Binding transfer context to nonce…' }));
       log('network', `POST /operation-challenge — amount=$${amount} is now part of context hash`);
+      const rttStart = performance.now();
       const challengeResp = await Api.getOperationChallenge(user, operationId, contextWithAmount);
+      const rtt = performance.now() - rttStart;
+      console.log(`[METRIC] Challenge RTT: ${rtt.toFixed(2)} ms`);
 
       if (challengeResp.status === 'DENIED') {
         log('error', `Challenge denied: ${challengeResp.reason ?? 'risk policy'}`);

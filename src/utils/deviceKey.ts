@@ -217,6 +217,7 @@ async function deriveMasterKey(
   log('crypto', 'Running PBKDF2-SHA256 (310,000 iterations) to derive MasterKey…',
     `salt=${truncate(base64Encode(salt.buffer))}`);
 
+  const t0 = performance.now();
   const masterKey = await crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt, iterations: 310_000, hash: 'SHA-256' },
     baseKey,
@@ -224,6 +225,8 @@ async function deriveMasterKey(
     false,       // non-exportable
     ['encrypt', 'decrypt']
   );
+  const pbkdfTime = performance.now() - t0;
+  console.log(`[METRIC] PBKDF2 Derivation: ${pbkdfTime.toFixed(2)} ms`);
 
   log('ram', 'MasterKey derived (AES-256) — exists in RAM only, never stored');
   return masterKey;

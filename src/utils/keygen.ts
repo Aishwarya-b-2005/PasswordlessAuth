@@ -77,7 +77,8 @@ function formatPEM(b64: string, type: string): string {
 }
 
 export async function generateKeyPair(): Promise<CryptoKeyPair> {
-  return window.crypto.subtle.generateKey(
+  const t0 = performance.now();
+  const keyPair = await window.crypto.subtle.generateKey(
     {
       name: "RSA-PSS",
       modulusLength: 2048,
@@ -87,6 +88,11 @@ export async function generateKeyPair(): Promise<CryptoKeyPair> {
     true,
     ["sign", "verify"]
   );
+
+  const keyGenTime = performance.now() - t0;
+  console.log(`[METRIC] Key Generation: ${keyGenTime.toFixed(2)} ms`);
+
+  return keyPair;
 }
 
 export async function exportPublicKeyPEM(publicKey: CryptoKey) {

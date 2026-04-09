@@ -1,0 +1,84 @@
+{
+  "inputs": [
+    "metrics_run1.json",
+    "metrics_run2.json",
+    "metrics_run3.json"
+  ],
+  "summary": {
+    "farPercent": {
+      "mean": 0.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "frrPercent": {
+      "mean": 0.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "deviceBindingViolationRatePercent": {
+      "mean": 0.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "botDetectionAccuracyPercent": {
+      "mean": 100.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "auditLogIntegrityRatePercent": {
+      "mean": 100.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "stepUpTriggerRatePercent": {
+      "mean": 47.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "denyRateAttackMixPercent": {
+      "mean": 50.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "denyRateLegitimatePercent": {
+      "mean": 0.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "denyRateAttackPercent": {
+      "mean": 100.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "stepUpRateLegitimatePercent": {
+      "mean": 94.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "stepUpRateAttackPercent": {
+      "mean": 0.0,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "riskScoreMean": {
+      "mean": 73.9,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "riskScoreStdDev": {
+      "mean": 26.539,
+      "stddev": 0.0,
+      "n": 3
+    },
+    "riskComputationMsMean": {
+      "mean": 1.223,
+      "stddev": 0.0918,
+      "n": 3
+    },
+    "riskComputationMsStdDev": {
+      "mean": 0.559,
+      "stddev": 0.0265,
+      "n": 3
+    }
+  }
+}
